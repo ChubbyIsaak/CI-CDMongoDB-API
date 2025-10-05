@@ -1,146 +1,179 @@
 # CICD Safe Changes API v4
 
-Plataforma Express + TypeScript para ejecutar cambios controlados en MongoDB (colecciones e índices) con auditoría, reversión segura, controles de seguridad y ahora integraciones opcionales con Artifactory y Jira.
+API Express + TypeScript para aplicar cambios de esquema en MongoDB de forma segura, auditable y trazable, con integraciones opcionales hacia Artifactory y Jira.
+
+---
 
 ## Tabla de contenidos
-- [Características principales](#características-principales)
-- [Requisitos](#requisitos)
-- [Configuración rápida](#configuración-rápida)
+
+- [Resumen rápido](#resumen-rápido)
+- [Requisitos previos](#requisitos-previos)
+- [Primeros pasos](#primeros-pasos)
 - [Variables de entorno](#variables-de-entorno)
-  - [Generales](#generales)
+  - [Parámetros generales](#parámetros-generales)
   - [Integración con Artifactory](#integración-con-artifactory)
   - [Integración con Jira](#integración-con-jira)
-- [Ejecución y scripts disponibles](#ejecución-y-scripts-disponibles)
-- [Uso básico de la API](#uso-básico-de-la-api)
-- [Integración con Artifactory](#integración-con-artifactory-1)
-  - [Configuración del servidor](#configuración-del-servidor)
-  - [Personalización por solicitud](#personalización-por-solicitud)
-- [Integración con Jira](#integración-con-jira-1)
-  - [Configuración del servidor](#configuración-del-servidor-1)
-  - [Personalización por solicitud](#personalización-por-solicitud-1)
-- [Payload de ejemplo con metadatos](#payload-de-ejemplo-con-metadatos)
-- [Monitoreo y trazabilidad](#monitoreo-y-trazabilidad)
+- [Scripts disponibles](#scripts-disponibles)
+- [Consumir la API](#consumir-la-api)
+- [Integrando Artifactory](#integrando-artifactory)
+  - [Configurar el servidor](#configurar-el-servidor)
+  - [Personalizar por petición](#personalizar-por-petición)
+- [Integrando Jira](#integrando-jira)
+  - [Configurar el servidor](#configurar-el-servidor-1)
+  - [Personalizar por petición](#personalizar-por-petición-1)
+- [Ejemplo completo de payload](#ejemplo-completo-de-payload)
+- [Trazabilidad y monitoreo](#trazabilidad-y-monitoreo)
 - [Solución de problemas](#solución-de-problemas)
 
-## Características principales
-- Auth HS256 con JWT y firma HMAC opcional en escrituras (cabecera `X-Signature`).
-- Rate limiting, Helmet, CORS configurable, allowlist de IP y sanitización ASCII.
-- Ventanas de cambio configurables con bypass opcional.
-- Auditoría en colección Mongo dedicada, revertir por `changeId`, dry-run y lotes con rollback.
-- Documentación OpenAPI (`/docs` con Swagger UI, `/redoc`).
-- Integración opcional:
-  - **Artifactory:** publicación de artefactos JSON con el resultado de cada operación.
-  - **Jira:** creación y actualización de issues con comentarios operativos.
+---
 
-## Requisitos
-- Node.js 18+.
-- Instancia MongoDB accesible desde el servicio.
-- (Opcional) Credenciales válidas para Artifactory y Jira si se habilitan las integraciones.
+## Resumen rápido
 
-## Configuración rápida
-1. Clona el repositorio y entra en el directorio.
-2. Copia `.env.example` a `.env` y completa los valores requeridos.
-3. Instala dependencias:
+- Autenticación JWT HS256 y verificación HMAC opcional en operaciones de escritura.
+- Middleware de seguridad: Helmet, CORS configurable, allowlist de IP y rate limiting.
+- Ventana de cambios configurable con posibilidad de bypass controlado.
+- Operaciones idempotentes `createCollection` y `createIndex`, con auditoría, revert y rollback en lotes.
+- Documentación OpenAPI disponible en `/docs` (Swagger UI) y `/redoc`.
+- Integraciones opcionales:
+  - **Artifactory**: genera un artefacto JSON por operación.
+  - **Jira**: crea o actualiza issues con comentarios operativos.
+
+---
+
+## Requisitos previos
+
+- Node.js 18 o superior.
+- Acceso a una instancia de MongoDB.
+- (Opcional) Credenciales válidas para Artifactory y/o Jira si las integraciones se habilitan.
+
+---
+
+## Primeros pasos
+
+1. Clona el repositorio y entra en la carpeta del proyecto.
+2. Copia `.env.example` a `.env` y completa los valores necesarios.
+3. Instala las dependencias:
    ```bash
    npm install
    ```
-4. Levanta el servicio en modo desarrollo:
+4. Ejecuta el proyecto en modo desarrollo:
    ```bash
    npm run dev
    ```
-5. Abre http://localhost:8080/docs para explorar la documentación interactiva.
+5. Abre `http://localhost:8080/docs` para navegar la especificación interactiva.
+
+---
 
 ## Variables de entorno
-### Generales
+
+### Parámetros generales
+
 | Variable | Descripción |
 |----------|-------------|
-| `PORT` | Puerto HTTP de la API (por defecto 8080). |
-| `AUDIT_DB` | Base de datos Mongo donde se almacenan los registros de auditoría. |
+| `PORT` | Puerto HTTP de la API (por defecto `8080`). |
+| `AUDIT_DB` | Base de datos donde se guardan los registros de auditoría. |
 | `JWT_SECRET` | Secreto HS256 para validar JWT (obligatorio si `JWT_REQUIRED=true`). |
-| `HMAC_SECRET` | Clave para verificar la firma HMAC de los cuerpos en escrituras. |
-| `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX` | Configuración del rate limiter global. |
-| `IP_ALLOWLIST` | Lista separada por comas de IP o rangos CIDR permitidos. |
-| `CORS_ORIGINS` | Orígenes permitidos para CORS (vacío = `*`). |
-| `OPLOG_ENABLE`, `OPLOG_DIR` | Control del logger operacional NDJSON. |
-| `CHANGE_ALLOW_WINDOW`, `CHANGE_FREEZE_MESSAGE`, `CHANGE_BYPASS_TOKEN` | Ventana de cambios y mensaje de bloqueo. |
-| `ALLOW_TARGET_URI_REGEX` | Regex opcional para restringir URIs de destino. |
+| `HMAC_SECRET` | Clave para validar la firma HMAC de los cuerpos en escrituras. |
+| `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX` | Configuración del limitador global. |
+| `IP_ALLOWLIST` | Lista (coma) de IP/CIDR permitidos. Vacío = sin restricción. |
+| `CORS_ORIGINS` | Orígenes permitidos para CORS. Vacío = `*`. |
+| `OPLOG_ENABLE`, `OPLOG_DIR` | Control de logs operativos (NDJSON diario). |
+| `CHANGE_ALLOW_WINDOW` | Cadena que define ventana de cambios permitidos. |
+| `CHANGE_FREEZE_MESSAGE` | Mensaje devuelto cuando la ventana bloquea la acción. |
+| `CHANGE_BYPASS_TOKEN` | Token opcional para saltar la ventana de cambios. |
+| `ALLOW_TARGET_URI_REGEX` | Regex opcional para validar URIs de destino. |
 
 ### Integración con Artifactory
+
 | Variable | Descripción |
 |----------|-------------|
-| `ARTIFACTORY_ENABLED` | Activa/desactiva la publicación (`true`/`false`). |
-| `ARTIFACTORY_BASE_URL` | URL base (ej. `https://artifactory.ejemplo.com/artifactory`). |
-| `ARTIFACTORY_REPOSITORY` | Repositorio por defecto donde se suben los artefactos. |
+| `ARTIFACTORY_ENABLED` | Activa la publicación (`true`/`false`). |
+| `ARTIFACTORY_BASE_URL` | URL base (ej. `https://artifactory.miempresa.com/artifactory`). |
+| `ARTIFACTORY_REPOSITORY` | Repositorio por defecto para los artefactos. |
 | `ARTIFACTORY_PATH_TEMPLATE` | Plantilla de ruta (`changes/{changeId}/{action}-{timestamp}.json`). |
-| `ARTIFACTORY_USERNAME` / `ARTIFACTORY_PASSWORD` | Credenciales básicas (alternativa al token). |
-| `ARTIFACTORY_TOKEN` | Token API (cabecera `X-JFrog-Art-Api`). |
-| `ARTIFACTORY_TIMEOUT_MS` | Timeout de la petición HTTP en ms. |
+| `ARTIFACTORY_USERNAME`, `ARTIFACTORY_PASSWORD` | Credenciales básicas (alternativa al token). |
+| `ARTIFACTORY_TOKEN` | Token API (`X-JFrog-Art-Api`). |
+| `ARTIFACTORY_TIMEOUT_MS` | Timeout de la solicitud HTTP. |
 
 ### Integración con Jira
+
 | Variable | Descripción |
 |----------|-------------|
-| `JIRA_ENABLED` | Activa/desactiva la sincronización (`true`/`false`). |
-| `JIRA_BASE_URL` | URL base de tu instancia (ej. `https://miempresa.atlassian.net`). |
-| `JIRA_EMAIL` | Cuenta usada para autenticar contra la API. |
-| `JIRA_API_TOKEN` | Token API asociado al email anterior. |
-| `JIRA_PROJECT_KEY` | Proyecto por defecto para nuevos issues. |
-| `JIRA_ISSUE_TYPE` | Tipo de issue a crear (por defecto `Task`). |
-| `JIRA_DEFAULT_LABELS` | Etiquetas comunes separadas por comas. |
-| `JIRA_TIMEOUT_MS` | Timeout de la petición HTTP en ms. |
+| `JIRA_ENABLED` | Activa la sincronización (`true`/`false`). |
+| `JIRA_BASE_URL` | URL base de Jira (ej. `https://miempresa.atlassian.net`). |
+| `JIRA_EMAIL` | Cuenta usada para autenticarse. |
+| `JIRA_API_TOKEN` | Token API asociado a `JIRA_EMAIL`. |
+| `JIRA_PROJECT_KEY` | Proyecto por defecto al crear issues. |
+| `JIRA_ISSUE_TYPE` | Tipo de issue (por defecto `Task`). |
+| `JIRA_DEFAULT_LABELS` | Etiquetas por defecto separadas por comas. |
+| `JIRA_TIMEOUT_MS` | Timeout de la solicitud HTTP. |
 
-> ℹ️ Copia y pega el bloque correspondiente desde `.env.example` para evitar errores de escritura.
+> Consejo: reutiliza el bloque completo de `.env.example` para evitar errores tipográficos.
 
-## Ejecución y scripts disponibles
+---
+
+## Scripts disponibles
+
 | Comando | Descripción |
 |---------|-------------|
-| `npm run dev` | Arranca el servidor con recarga en caliente (`ts-node-dev`). |
+| `npm run dev` | Inicia el servidor con recarga en caliente (`ts-node-dev`). |
 | `npm run build` | Compila TypeScript a JavaScript en `dist/`. |
 | `npm start` | Ejecuta la versión compilada desde `dist/`. |
 
-## Uso básico de la API
-- Autentica tus peticiones con un JWT HS256 firmado con `JWT_SECRET`.
-- Para endpoints POST de cambio (`/changes/apply`, `/changes/apply-batch`, `/changes/revert`) agrega la firma HMAC en `X-Signature` si está habilitada.
-- Ejemplo rápido para crear un índice:
-  ```bash
-  curl -X POST "http://localhost:8080/changes/apply" \
-    -H "Authorization: Bearer <TOKEN>" \
-    -H "Content-Type: application/json" \
-    -d '{
-      "target": {
-        "uri": "mongodb://user:pass@127.0.0.1:27017/admin",
-        "database": "MyDB"
-      },
-      "operation": {
-        "type": "createIndex",
-        "collection": "users",
-        "spec": { "email": 1 },
-        "options": { "name": "ix_email_unique", "unique": true }
-      }
-    }'
-  ```
-- Consulta `/changes?uri=<uri codificada>` para obtener el historial (excluye revertidos salvo que pidas el estado explícitamente).
+---
 
-## Integración con Artifactory
-### Configuración del servidor
-1. Activa la integración en `.env` (`ARTIFACTORY_ENABLED=true`).
-2. Define `ARTIFACTORY_BASE_URL` y `ARTIFACTORY_REPOSITORY` acorde a tu instancia.
-3. Elige un método de autenticación:
-   - Usuario/contraseña (`ARTIFACTORY_USERNAME`, `ARTIFACTORY_PASSWORD`).
-   - Token API (`ARTIFACTORY_TOKEN`).
-4. Arranca/reinicia el servicio para aplicar los cambios.
+## Consumir la API
 
-Cada operación genera un JSON con:
-- Datos del cambio (`change`, incluyendo metadatos).
-- Resultado (`status`, `message`, `durationMs`, etc.).
-- Contexto operacional (acción, timestamp, usuario, requestId, información del lote).
+1. Genera un JWT firmado con `JWT_SECRET`. Puedes usar `jsonwebtoken`:
+   ```bash
+   npm i jsonwebtoken
+   node -e "const jwt=require('jsonwebtoken');console.log(jwt.sign({sub:'user-1',email:'dev@local'}, process.env.JWT_SECRET,{algorithm:'HS256',expiresIn:'1h'}));"
+   ```
+2. Para aplicar un cambio individual:
+   ```bash
+   curl -X POST "http://localhost:8080/changes/apply" \
+     -H "Authorization: Bearer <TOKEN>" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "target": {
+         "uri": "mongodb://user:pass@127.0.0.1:27017/admin",
+         "database": "MyDB"
+       },
+       "operation": {
+         "type": "createIndex",
+         "collection": "users",
+         "spec": { "email": 1 },
+         "options": { "name": "ix_email_unique", "unique": true }
+       }
+     }'
+   ```
+3. Usa `/changes?uri=<URI codificada>` para consultar auditoría. Añade `status=applied,failed,skipped,reverted` si necesitas incluir revertidos.
 
-El response de la API incluye `integrations.artifactory` con:
-- `enabled`: si la integración estaba activa.
-- `success`: resultado de la subida.
-- `details`: `url`, `path`, `repository` y `statusCode`, o bien `error` / `skippedReason`.
+Cuando `dryRun=true`, la API valida y genera plan, pero no toca MongoDB ni dispara integraciones.
 
-### Personalización por solicitud
-En el payload puedes sobreescribir parámetros mediante `metadata.artifactory`:
+---
+
+## Integrando Artifactory
+
+### Configurar el servidor
+
+1. Establece `ARTIFACTORY_ENABLED=true` en `.env`.
+2. Define `ARTIFACTORY_BASE_URL` y `ARTIFACTORY_REPOSITORY`.
+3. Configura autenticación: usuario/contraseña o token API.
+4. Reinicia el servicio para aplicar los cambios.
+
+Para cada operación se genera un JSON con:
+
+- Información del cambio original (incluyendo metadatos).
+- Resultado (`status`, `message`, `durationMs`, `revertPlan`).
+- Contexto operativo (`action`, `timestamp`, `requestId`, información de lote, actor`).
+
+La respuesta HTTP incluye `integrations.artifactory` con el resultado de la publicación (`enabled`, `success`, `details`, `error`, `skippedReason`).
+
+### Personalizar por petición
+
+Dentro del payload, usa `metadata.artifactory`:
+
 ```json
 "metadata": {
   "artifactory": {
@@ -154,23 +187,30 @@ En el payload puedes sobreescribir parámetros mediante `metadata.artifactory`:
   }
 }
 ```
-- La plantilla soporta `{changeId}`, `{action}`, `{timestamp}`, `{collection}` y `{operation}`.
-- Las propiedades se anexan como parámetros de matriz (`;key=value`).
-- `skip: true` omite la publicación para ese cambio puntual.
 
-## Integración con Jira
-### Configuración del servidor
-1. Activa la integración (`JIRA_ENABLED=true`).
-2. Completa `JIRA_BASE_URL`, `JIRA_PROJECT_KEY`, `JIRA_EMAIL` y `JIRA_API_TOKEN`.
+- La plantilla acepta `{changeId}`, `{action}`, `{timestamp}`, `{collection}` y `{operation}`.
+- `properties` genera parámetros de matriz (`;clave=valor`).
+- Usa `skip: true` si quieres omitir la publicación en un caso concreto.
+
+---
+
+## Integrando Jira
+
+### Configurar el servidor
+
+1. Establece `JIRA_ENABLED=true`.
+2. Define `JIRA_BASE_URL`, `JIRA_PROJECT_KEY`, `JIRA_EMAIL` y `JIRA_API_TOKEN`.
 3. Ajusta `JIRA_ISSUE_TYPE` y `JIRA_DEFAULT_LABELS` si lo necesitas.
 4. Reinicia el servicio.
 
 Comportamiento por defecto:
-- Si el payload **no** incluye `metadata.jira.issueKey`, se crea un nuevo issue con summary y description generados automáticamente.
-- Cada ejecución añade un comentario con `action`, `status`, `message` y `timestamp`.
-- La respuesta expone `integrations.jira` con `issueKey`, `created`, `commentId`, `url` y, en caso de error, el motivo.
 
-### Personalización por solicitud
+- Si no se envía `metadata.jira.issueKey`, la API crea un nuevo issue usando los valores derivados del cambio.
+- Cada ejecución agrega un comentario con `action`, `status`, `message` y `timestamp`.
+- La respuesta incluye `integrations.jira` con `issueKey`, `created`, `commentId`, `url`, o en su defecto, `error` / `skippedReason`.
+
+### Personalizar por petición
+
 ```json
 "metadata": {
   "jira": {
@@ -184,14 +224,17 @@ Comportamiento por defecto:
   }
 }
 ```
-- `issueKey` permite reutilizar un ticket existente.
-- `summary` y `description` reemplazan los valores generados.
-- `labels`, `components` y `assignee` sobrescriben la configuración global.
-- `skip: true` omite la sincronización de esa ejecución.
 
-> ℹ️ `linkIssues` está reservado para futuras extensiones (actualmente sin efecto).
+- `issueKey` reutiliza un ticket existente.
+- `summary` y `description` sobreescriben los generados.
+- `labels`, `components` y `assignee` complementan o sustituyen la configuración global.
+- `skip: true` evita que esa petición dispare Jira.
+- `linkIssues` está reservado para futuras funciones.
 
-## Payload de ejemplo con metadatos
+---
+
+## Ejemplo completo de payload
+
 ```json
 {
   "target": {
@@ -223,20 +266,26 @@ Comportamiento por defecto:
 }
 ```
 
-## Monitoreo y trazabilidad
-- Los logs operativos (si `OPLOG_ENABLE=true`) se guardan en `logs/ops-YYYYMMDD.log` en formato NDJSON.
-- La colección `cicd_changes_audit` almacena cada operación con su `changeId`, `target`, `operation`, `metadata`, `status` y `revertPlan`.
-- `integrations` en la respuesta del API permite validar rápidamente qué ocurrió en Artifactory/Jira.
+---
 
-## Solución de problemas
-| Problema | Posible causa / acción |
-|----------|------------------------|
-| `401 Unauthorized` | Token JWT incorrecto o expirado. Genera uno nuevo con el mismo `JWT_SECRET`. |
-| `403` en operaciones de cambio | IP fuera del allowlist, ventana de cambio cerrada o HMAC inválido. Revisa `IP_ALLOWLIST`, `CHANGE_ALLOW_WINDOW` y la firma. |
-| `integrations.artifactory.skippedReason = "missing_credentials"` | No se configuró un token ni usuario/contraseña válidos. |
-| `integrations.jira.error` con sufijo `_failed_4xx/5xx` | Jira rechazó la petición. Verifica proyecto, credenciales y campos requeridos. |
-| Integraciones sin ejecutarse en `dryRun` | Comportamiento esperado: las integraciones se omiten automáticamente cuando `dryRun=true`. |
+## Trazabilidad y monitoreo
+
+- **Logs operativos**: si `OPLOG_ENABLE=true`, se generan archivos NDJSON diarios en `logs/ops-YYYYMMDD.log`.
+- **Auditoría en MongoDB**: colección `cicd_changes_audit` con detalle de cada cambio y su `revertPlan`.
+- **Respuesta del API**: el bloque `integrations` confirma qué ocurrió en Artifactory y Jira.
 
 ---
 
-¿Necesitas automatizar gitops o pipelines? Envía los JSON de cambios desde tu CI/CD y aprovecha las respuestas de Artifactory/Jira para registrar automáticamente la trazabilidad en tus tableros.
+## Solución de problemas
+
+| Problema | Acción sugerida |
+|----------|-----------------|
+| `401 Unauthorized` | Verifica el JWT (firmado con el secreto correcto y sin expirar). |
+| `403` en `/changes/*` | IP fuera del allowlist, ventana de cambios cerrada o firma HMAC inválida. |
+| `integrations.artifactory.skippedReason = "missing_credentials"` | Falta token/API key o usuario/contraseña en `.env`. |
+| Errores `_failed_4xx/5xx` en Jira | Revisa permisos, datos obligatorios y proyecto configurado. |
+| Integraciones omitidas en `dryRun` | Comportamiento esperado: no se contacta Artifactory/Jira durante simulaciones. |
+
+---
+
+¿Planeas integrarlo en un pipeline? Orquesta los JSON desde tu CI/CD y usa el resumen de integraciones para alimentar tableros operativos, reportes o alertas automáticas.
