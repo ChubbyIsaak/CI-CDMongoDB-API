@@ -3,6 +3,9 @@ import { ChangeRequestSchema } from "../lib/validator";
 import { applyChange, applyBatch, revertChange, listChanges, getChange } from "../services/changes.service";
 import { newChangeId } from "../lib/ids";
 import { opsLog } from "../lib/ops-logger";
+import { runIntegrations } from "../services/integrations.service";
+import type { CombinedIntegrationResult } from "../services/integrations.service";
+import type { ChangeRequest } from "../types/change";
 
 // Esta funcion convierte distintos valores a un booleano de forma simple.
 function coerceBoolean(value: unknown, fallback = false): boolean {
@@ -72,7 +75,15 @@ export async function applyChangeController(req: Request, res: Response) {
     durationMs: (result as any).durationMs
   });
 
-  return res.json({ ...result, changeId: parsed.data.changeId });
+  const changeForIntegration: ChangeRequest = { ...parsed.data, changeId: (result as any).changeId || parsed.data.changeId };
+  const integrations = await runIntegrations(changeForIntegration, result as Record<string, unknown>, {
+    action: "apply",
+    dryRun,
+    actor,
+    requestId: req.headers["x-request-id"] as string | undefined,
+  });
+
+  return res.json({ ...result, changeId: changeForIntegration.changeId, integrations });
 }
 
 // Controlador que procesa un lote de cambios enviados por POST.
@@ -115,7 +126,8 @@ export async function applyBatchController(req: Request, res: Response) {
   });
 
   // Ejecutamos el lote y devolvemos como salio.
-  const result = await applyBatch(parsed as any[], { stopOnError, dryRun });
+  const validChanges = parsed as ChangeRequest[];
+  const result = await applyBatch(validChanges as any[], { stopOnError, dryRun });
 
   // Guardamos info extra del resultado por si algo falla.
   opsLog({
@@ -124,8 +136,33 @@ export async function applyBatchController(req: Request, res: Response) {
     status: (result as any).status,
     failedAt: (result as any).failedAt
   });
+  const responseRequestId = req.headers["x-request-id"] as string | undefined;
 
-  return res.json(result);
+  if (!Array.isArray(result.results)) {
+    return res.json(result);
+  }
+
+  const integrations = await Promise.all(result.results.map((entry: Record<string, unknown>, index: number) => {
+    const fromBatch = validChanges[index] || parsed[index] as ChangeRequest;
+    const changeForIntegration: ChangeRequest = {
+      ...fromBatch,
+      changeId: (entry as any).changeId || fromBatch.changeId,
+    };
+    return runIntegrations(changeForIntegration, entry, {
+      action: "batch",
+      dryRun,
+      actor,
+      requestId: responseRequestId,
+      batch: { index, total: result.results.length },
+    });
+  }));
+
+  const enrichedResults = result.results.map((entry: Record<string, unknown>, index: number) => ({
+    ...entry,
+    integrations: integrations[index],
+  }));
+
+  return res.json({ ...result, results: enrichedResults });
 }
 
 // Controlador que revierte un cambio via POST.
@@ -159,8 +196,18 @@ export async function revertChangeController(req: Request, res: Response) {
     status: (result as any).status,
     message: (result as any).message
   });
+  let integrations: CombinedIntegrationResult | undefined;
+  if ((result as any).change) {
+    const changeForIntegration = (result as any).change as ChangeRequest;
+    integrations = await runIntegrations(changeForIntegration, result as Record<string, unknown>, {
+      action: "revert",
+      dryRun: false,
+      actor,
+      requestId: req.headers["x-request-id"] as string | undefined,
+    });
+  }
 
-  return res.json(result);
+  return res.json({ ...result, integrations });
 }
 
 // Controlador que trae un cambio por GET usando su id.

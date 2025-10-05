@@ -2,6 +2,7 @@ import { MongoClient, Db } from "mongodb";
 import { ChangeRequestSchema } from "../lib/validator";
 import { newChangeId } from "../lib/ids";
 import { getClient } from "./mongo.service";
+import type { ChangeRequest } from "../types/change";
 
 // Esta constante mantiene el nombre de la coleccion de auditoria.
 const AUDIT_COLLECTION = "cicd_changes_audit";
@@ -137,9 +138,15 @@ export async function revertChange(changeId: string, ctx: { uri: string; databas
 
   // Buscamos el ultimo registro para ese changeId y la misma URI.
   const rec = await audit.find({ changeId, "target.uri": ctx.uri }).sort({ createdAt: -1 }).limit(1).next();
-  if (!rec) return { status: "failed", message: "No audit entry was found for the requested changeId." };
+  if (!rec) return { changeId, status: "failed", message: "No audit entry was found for the requested changeId." };
 
   const targetDb = db || client.db(rec.target.database);
+  const changeRecord: ChangeRequest = {
+    changeId: rec.changeId,
+    target: rec.target,
+    operation: rec.operation,
+    metadata: rec.metadata || {},
+  };
 
   if (rec.operation.type === "createIndex") {
     const { collection } = rec.operation;
@@ -147,26 +154,26 @@ export async function revertChange(changeId: string, ctx: { uri: string; databas
     try {
       await targetDb.collection(collection).dropIndex(name);
       await audit.updateOne({ _id: rec._id }, { $set: { revertedAt: new Date(), revertMessage: "Index dropped successfully.", status: "reverted" } });
-      return { status: "reverted", message: "Index dropped successfully." };
+      return { changeId, status: "reverted", message: "Index dropped successfully.", change: changeRecord };
     } catch (err: any) {
-      return { status: "failed", message: "Failed to drop index: " + String(err?.message || err) };
+      return { changeId, status: "failed", message: "Failed to drop index: " + String(err?.message || err), change: changeRecord };
     }
   } else if (rec.operation.type === "createCollection") {
     const { collection } = rec.operation;
     const coll = targetDb.collection(collection);
     const count = await coll.countDocuments();
     if (count > 0) {
-      return { status: "failed", message: "Cannot drop the collection because it is not empty." };
+      return { changeId, status: "failed", message: "Cannot drop the collection because it is not empty.", change: changeRecord };
     }
     try {
       await targetDb.dropCollection(collection);
       await audit.updateOne({ _id: rec._id }, { $set: { revertedAt: new Date(), revertMessage: "Collection dropped successfully.", status: "reverted" } });
-      return { status: "reverted", message: "Collection dropped successfully." };
+      return { changeId, status: "reverted", message: "Collection dropped successfully.", change: changeRecord };
     } catch (err: any) {
-      return { status: "failed", message: "Failed to drop collection: " + String(err?.message || err) };
+      return { changeId, status: "failed", message: "Failed to drop collection: " + String(err?.message || err), change: changeRecord };
     }
   } else {
-    return { status: "failed", message: "Unsupported operation type for revertChange." };
+    return { changeId, status: "failed", message: "Unsupported operation type for revertChange.", change: changeRecord };
   }
 }
 

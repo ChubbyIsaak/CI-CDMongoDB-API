@@ -69,7 +69,12 @@ components:
         changeId: { type: string, description: Optional. If not provided, server generates one. }
         target: { $ref: "#/components/schemas/Target" }
         operation: { $ref: "#/components/schemas/Operation" }
-        metadata: { type: object, additionalProperties: true }
+        metadata:
+          type: object
+          additionalProperties: true
+          properties:
+            artifactory: { $ref: "#/components/schemas/ArtifactoryMetadata" }
+            jira: { $ref: "#/components/schemas/JiraMetadata" }
     ChangeResult:
       type: object
       properties:
@@ -78,6 +83,90 @@ components:
         message: { type: string }
         revertPlan: { type: object, additionalProperties: true }
         durationMs: { type: integer }
+        change: { $ref: "#/components/schemas/ChangeRequest" }
+        integrations: { $ref: "#/components/schemas/IntegrationSummary" }
+    ArtifactoryMetadata:
+      type: object
+      properties:
+        path:
+          type: string
+          description: Custom artifact path. Supports {changeId}, {action}, {timestamp}, {collection}, {operation} placeholders.
+        repository: { type: string, description: Overrides default repository. }
+        properties:
+          type: object
+          additionalProperties: { type: string }
+          description: Matrix parameters added to the artifact upload request.
+        skip: { type: boolean, description: If true, skips Artifactory publishing for this change. }
+    JiraMetadata:
+      type: object
+      properties:
+        issueKey: { type: string, description: Reuse an existing Jira issue key instead of creating a new one. }
+        summary: { type: string }
+        description: { type: string }
+        issueType: { type: string }
+        projectKey: { type: string }
+        labels:
+          type: array
+          items: { type: string }
+        components:
+          type: array
+          items: { type: string }
+        skip: { type: boolean, description: If true, skips Jira sync for this change. }
+        linkIssues:
+          type: array
+          items: { type: string }
+          description: Reserved for future linking support.
+        assignee: { type: string, description: Optional username to assign newly created issues. }
+    IntegrationOutcome:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        success: { type: boolean }
+        skippedReason: { type: string }
+        error: { type: string }
+        details: { type: object, additionalProperties: true }
+    ArtifactoryIntegrationOutcome:
+      allOf:
+        - $ref: "#/components/schemas/IntegrationOutcome"
+        - type: object
+          properties:
+            details:
+              type: object
+              properties:
+                url: { type: string }
+                path: { type: string }
+                repository: { type: string }
+                statusCode: { type: integer }
+              additionalProperties: true
+    JiraIntegrationOutcome:
+      allOf:
+        - $ref: "#/components/schemas/IntegrationOutcome"
+        - type: object
+          properties:
+            details:
+              type: object
+              properties:
+                issueKey: { type: string }
+                created: { type: boolean }
+                commentId: { type: string }
+                url: { type: string }
+              additionalProperties: true
+    IntegrationSummary:
+      type: object
+      properties:
+        artifactory: { $ref: "#/components/schemas/ArtifactoryIntegrationOutcome" }
+        jira: { $ref: "#/components/schemas/JiraIntegrationOutcome" }
+    BatchResult:
+      type: object
+      required: [status, results]
+      properties:
+        status: { type: string, enum: [ok, rolled_back] }
+        failedAt: { type: integer, nullable: true }
+        results:
+          type: array
+          items:
+            allOf:
+              - $ref: "#/components/schemas/ChangeResult"
 paths:
   /health:
     get:
@@ -146,7 +235,7 @@ paths:
           description: Result
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ChangeResult" }
+              schema: { $ref: "#/components/schemas/BatchResult" }
   /changes/revert:
     post:
       tags: [Changes]
