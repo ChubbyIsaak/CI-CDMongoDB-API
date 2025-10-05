@@ -288,4 +288,126 @@ Comportamiento por defecto:
 
 ---
 
+## Manual operativo: Artifactory + Jira + Postman
+
+### 1. Preparativos
+
+1. **Recursos necesarios**
+   - Cuenta con privilegios administrativos en Artifactory (Cloud o self-hosted).
+   - Cuenta Atlassian con permiso para crear proyectos en Jira Software.
+   - Acceso a una instancia MongoDB y al servidor donde se ejecutará esta API.
+   - Postman instalado (o Postman Web + agente local).
+2. **Repositorio local**: clona este proyecto y asegúrate de instalar dependencias (`npm install`).
+
+### 2. Aprovisionar Artifactory
+
+1. **Crear instancia**
+   - Para pruebas rápidas puedes usar [JFrog Cloud Free/Trial](https://jfrog.com/start-free/) o levantar JFrog Platform en Docker.
+2. **Crear repositorio genérico**
+   - Ingresa a *Administration → Repositories → Create Repository → Generic (Local).* 
+   - Asigna un nombre (ej. `db-changes`) y guarda la configuración por defecto.
+3. **Crear usuario técnico o token**
+   - Opciones:
+     - Usuario dedicado con permiso `deploy` sobre el repo recién creado.
+     - Token API (administración → `User Management` → `Access Tokens`).
+   - Anota `username/password` o el token, la base URL de Artifactory (`https://<host>/artifactory`) y el nombre del repositorio.
+
+### 3. Aprovisionar Jira
+
+1. **Crear proyecto**
+   - Entra a [admin.atlassian.com](https://admin.atlassian.com/) → *Jira Software* → *Projects* → *Create project* → Plantilla Kanban/Scrum clásica.
+   - Define la clave del proyecto (ej. `OPS`).
+2. **Generar API Token**
+   - Visita <https://id.atlassian.com/manage-profile/security/api-tokens> y genera un nuevo token.
+   - Guarda correo y token; se usarán para autenticación básica (email + token).
+
+### 4. Vincular integraciones con la API
+
+1. **Configurar `.env`**
+   ```env
+   ARTIFACTORY_ENABLED=true
+   ARTIFACTORY_BASE_URL=https://<tu-host>/artifactory
+   ARTIFACTORY_REPOSITORY=db-changes
+   ARTIFACTORY_USERNAME=<usuario>        # O usa ARTIFACTORY_TOKEN
+   ARTIFACTORY_PASSWORD=<contraseña>
+   ARTIFACTORY_TIMEOUT_MS=20000
+
+   JIRA_ENABLED=true
+   JIRA_BASE_URL=https://<tu-org>.atlassian.net
+   JIRA_EMAIL=<correo@tuorg.com>
+   JIRA_API_TOKEN=<token_api>
+   JIRA_PROJECT_KEY=OPS
+   JIRA_ISSUE_TYPE=Task
+   JIRA_DEFAULT_LABELS=db-change,automation
+   JIRA_TIMEOUT_MS=20000
+   ```
+2. **Levantar la API**
+   ```bash
+   npm run dev
+   ```
+   - Verifica en consola que no existan errores de conexión.
+3. **Preparar collection en Postman**
+   - Crea un *Environment* con variables:
+     - `baseUrl`: `http://localhost:8080`
+     - `jwt`: token válido (puedes generarlo con el snippet de este README).
+     - `mongoUri`: URI del cluster de pruebas.
+     - `database`: nombre de la base (ej. `Billing`).
+     - `artifactoryRepo`: `db-changes` (opcional).
+     - `jiraIssueKey`: deja vacío; se completará automáticamente.
+
+### 5. Ejecutar una prueba con Postman (buenas prácticas)
+
+1. **Request**: POST `${{baseUrl}}/changes/apply`
+   - Headers:
+     - `Authorization: Bearer {{jwt}}`
+     - `Content-Type: application/json`
+     - (Opcional) `X-Request-Id: {{uuid}}` para trazabilidad.
+   - Body (raw JSON):
+     ```json
+     {
+       "target": {
+         "uri": "{{mongoUri}}",
+         "database": "{{database}}"
+       },
+       "operation": {
+         "type": "createIndex",
+         "collection": "payments",
+         "spec": { "invoiceId": 1 },
+         "options": { "name": "idx_invoice_unique", "unique": true }
+       },
+       "metadata": {
+         "artifactory": {
+           "repository": "{{artifactoryRepo}}",
+           "path": "changes/{changeId}/{action}-{timestamp}.json",
+           "properties": {
+             "environment": "dev",
+             "service": "payments-api"
+           }
+         },
+         "jira": {
+           "summary": "Crear índice unique para invoices",
+           "labels": ["db-change", "payments"],
+           "components": ["Payments"]
+         }
+       }
+     }
+     ```
+2. **Enviar petición** y revisar respuesta:
+   - `status` debe ser `200`.
+   - `integrations.artifactory.success` → `true` y `details.url` apuntando al JSON en Artifactory.
+   - `integrations.jira.details.issueKey` → clave del issue creado.
+   - Guarda `changeId` como variable Postman para pruebas posteriores (ej. revert).
+3. **Validaciones manuales**
+   - Artifactory: descarga el artefacto y confirma que incluye `change`, `result` y `context`.
+   - Jira: abre el issue (`details.url`) y verifica el comentario con `Action`, `Status`, `Message` y `Timestamp`.
+4. **Prueba de re-ejecución**
+   - Reenvía la misma petición; Artifactory debe registrar un segundo artefacto y Jira debe añadir un nuevo comentario (la integración no crea issue nuevo).
+5. **Rollback opcional**
+   - POST `${{baseUrl}}/changes/revert` con body `{ "changeId": "<id>", "uri": "{{mongoUri}}" }`.
+   - Verifica que Artifactory reciba el artefacto de tipo `revert` y que Jira sume otro comentario con `action: revert`.
+
+> Buenas prácticas: usa entornos de ensayo, activa `dryRun=true` antes de ejecutar contra producción, documenta los `issueKey` resultantes y automatiza limpieza (drop index/colección) al finalizar las pruebas.
+
+---
+
 ¿Planeas integrarlo en un pipeline? Orquesta los JSON desde tu CI/CD y usa el resumen de integraciones para alimentar tableros operativos, reportes o alertas automáticas.
