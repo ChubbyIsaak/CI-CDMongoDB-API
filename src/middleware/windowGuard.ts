@@ -1,9 +1,11 @@
-﻿import { Request, Response, NextFunction } from "express";
+import { Request, Response, NextFunction } from "express";
 import { DateTime } from "luxon";
 
+// Esta estructura define los horarios permitidos: dias, rango horario y zona.
 type WindowDef = { days: number[]; start: string; end: string; tz: string };
 const dayMap: Record<string, number> = { Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6, Sun:7 };
 
+// Parseamos la cadena de ventanas para convertirla en objetos faciles de usar.
 function parseWindows(raw?: string): WindowDef[] {
   if (!raw) return [];
   return raw.split(",").map(s => s.trim()).filter(Boolean).map(seg => {
@@ -17,6 +19,8 @@ function parseWindows(raw?: string): WindowDef[] {
     return { days, start, end, tz };
   });
 }
+
+// Confirmamos si el momento actual esta dentro de alguna ventana permitida.
 function isAllowedNow(windows: WindowDef[]): boolean {
   if (!windows.length) return true;
   return windows.some(w => {
@@ -30,9 +34,11 @@ function isAllowedNow(windows: WindowDef[]): boolean {
     return now >= start && now <= end;
   });
 }
+
+// Middleware que permite o bloquea cambios segun las ventanas permitidas.
 export function windowGuard() {
   const raw = process.env.CHANGE_ALLOW_WINDOW;
-  const freezeMsg = process.env.CHANGE_FREEZE_MESSAGE || "Changes blocked by change window";
+  const freezeMsg = process.env.CHANGE_FREEZE_MESSAGE || "Change requests are blocked during the current window.";
   let windows: WindowDef[] = [];
   try { windows = parseWindows(raw || ""); } catch { windows = []; }
   return (req: Request, res: Response, next: NextFunction) => {

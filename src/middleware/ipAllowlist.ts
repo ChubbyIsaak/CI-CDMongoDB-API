@@ -1,6 +1,7 @@
-﻿import { Request, Response, NextFunction } from "express";
+import { Request, Response, NextFunction } from "express";
 import ipaddr from "ipaddr.js";
 
+// Este helper convierte direcciones en formato uniforme, incluso si vienen ipv6 mapeadas.
 function normalizeIp(ip: string): string {
   try {
     const addr = ipaddr.parse(ip);
@@ -14,6 +15,7 @@ function normalizeIp(ip: string): string {
   }
 }
 
+// Este middleware solo deja pasar IPs incluidas en la lista configurada.
 export function ipAllowlist() {
   const raw = (process.env.IP_ALLOWLIST || "").trim();
   if (!raw) return (_req: Request, _res: Response, next: NextFunction) => next();
@@ -40,7 +42,7 @@ export function ipAllowlist() {
       });
     } catch { allowed = false; }
 
-    if (!allowed) return res.status(403).json({ error: "IP not allowed" });
+    if (!allowed) return res.status(403).json({ error: "Access denied because the IP address is not allowlisted." });
     next();
   };
 }

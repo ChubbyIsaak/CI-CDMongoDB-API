@@ -1,4 +1,4 @@
-﻿import { Router } from "express";
+import { Router } from "express";
 import {
   applyBatchController,
   applyChangeController,
@@ -12,12 +12,12 @@ import { limiter } from "../middleware/rateLimit";
 
 export const router = Router();
 
-// Write endpoints: signature -> rate limit -> window guard
+// Rutas de escritura: validamos firma, limite y ventana antes de aplicar cambios.
 router.post("/apply", verifySignature(), limiter(), windowGuard(), applyChangeController);
 router.post("/apply-batch", verifySignature(), limiter(), windowGuard(), applyBatchController);
 router.post("/revert", verifySignature(), limiter(), revertChangeController);
 
-// Read endpoints
+// Rutas de lectura: devolvemos informacion de cambios en peticiones GET.
 router.get("/:changeId", getChangeController);
 router.get("/", listPendingController);
 router.get("/pending", listPendingController);
