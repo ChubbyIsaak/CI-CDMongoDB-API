@@ -1,4 +1,4 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 
 export const TargetSchema = z.object({
   uri: z.string().min(1, "uri required"),
@@ -19,17 +19,19 @@ const PartialFilterAllowedOps = z.union([
 export const CreateCollectionSchema = z.object({
   type: z.literal("createCollection"),
   collection: z.string().min(1),
-  options: z.record(z.any()).optional()
+  options: z.record(z.string(), z.any()).optional()
 });
 
 export const CreateIndexSchema = z.object({
   type: z.literal("createIndex"),
   collection: z.string().min(1),
-  spec: z.record(z.union([z.number(), z.literal(1), z.literal(-1)])).refine(v => Object.keys(v).length > 0, "spec required"),
+  spec: z
+    .record(z.string(), z.union([z.number(), z.literal(1), z.literal(-1)]))
+    .refine(v => Object.keys(v).length > 0, "spec required"),
   options: z.object({
     name: z.string().min(1),
     unique: z.boolean().optional(),
-    partialFilterExpression: z.record(z.any()).optional()
+    partialFilterExpression: z.record(z.string(), z.any()).optional()
   }).optional()
 }).superRefine((data, ctx) => {
   const pfe = data.options?.partialFilterExpression as Record<string, any> | undefined;
@@ -53,5 +55,5 @@ export const ChangeRequestSchema = z.object({
   changeId: z.string().min(1).optional(),
   target: TargetSchema,
   operation: OperationSchema,
-  metadata: z.record(z.any()).optional()
+  metadata: z.record(z.string(), z.any()).optional()
 });
