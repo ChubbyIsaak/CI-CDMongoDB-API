@@ -1,0 +1,214 @@
+﻿openapi: 3.0.3
+info:
+  title: CICD Safe Changes API
+  version: v4
+  description: >
+    API for safe, idempotent schema changes in MongoDB (createCollection, createIndex) with auditing, dry-run,
+    batch with compensating rollback, and safe revert by changeId.
+servers:
+  - url: http://localhost:{port}
+    variables:
+      port:
+        default: "8080"
+tags:
+  - name: Health
+  - name: Changes
+    description: Change operations and audit
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    UriParam:
+      in: query
+      name: uri
+      required: true
+      schema: { type: string }
+      description: MongoDB connection string to the replica set
+  schemas:
+    Target:
+      type: object
+      required: [uri, database]
+      properties:
+        uri: { type: string, example: mongodb://user:pass@127.0.0.1:27000,127.0.0.1:27001,127.0.0.1:27002/?replicaSet=rs0&authSource=admin }
+        database: { type: string, example: MyDB }
+    CreateCollection:
+      type: object
+      required: [type, collection]
+      properties:
+        type: { type: string, enum: [createCollection] }
+        collection: { type: string, example: users }
+        options: { type: object, additionalProperties: true }
+    CreateIndex:
+      type: object
+      required: [type, collection, spec]
+      properties:
+        type: { type: string, enum: [createIndex] }
+        collection: { type: string, example: users }
+        spec:
+          type: object
+          additionalProperties: [number, integer]
+          example: { email: 1 }
+        options:
+          type: object
+          properties:
+            name: { type: string, example: ix_email_unique }
+            unique: { type: boolean, example: true }
+            partialFilterExpression:
+              type: object
+              additionalProperties: true
+    Operation:
+      oneOf:
+        - $ref: "#/components/schemas/CreateCollection"
+        - $ref: "#/components/schemas/CreateIndex"
+    ChangeRequest:
+      type: object
+      properties:
+        changeId: { type: string, description: Optional. If not provided, server generates one. }
+        target: { $ref: "#/components/schemas/Target" }
+        operation: { $ref: "#/components/schemas/Operation" }
+        metadata: { type: object, additionalProperties: true }
+    ChangeResult:
+      type: object
+      properties:
+        changeId: { type: string }
+        status: { type: string, enum: [applied, skipped, failed, reverted, ok, rolled_back] }
+        message: { type: string }
+        revertPlan: { type: object, additionalProperties: true }
+        durationMs: { type: integer }
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+  /changes/apply:
+    post:
+      tags: [Changes]
+      summary: Apply a single change
+      description: >
+        Supports dryRun via query param. Valid operations: createCollection, createIndex.
+        If changeId is omitted, server generates one and returns it.
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - in: query
+          name: dryRun
+          schema: { type: boolean }
+          description: If true, validates and returns plan without touching MongoDB or audit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangeRequest" }
+            examples:
+              createIndex:
+                value:
+                  target:
+                    uri: mongodb://user:pass@127.0.0.1:27000,127.0.0.1:27001,127.0.0.1:27002/?replicaSet=rs0&authSource=admin
+                    database: MyDB
+                  operation:
+                    type: createIndex
+                    collection: users
+                    spec: { email: 1 }
+                    options: { name: ix_email_unique, unique: true }
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChangeResult" }
+  /changes/apply-batch:
+    post:
+      tags: [Changes]
+      summary: Apply a batch of changes
+      description: >
+        Applies multiple changes sequentially. If any fails and stopOnError is true, previously applied changes are reverted.
+        Supports dryRun.
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                stopOnError: { type: boolean, default: true }
+                dryRun: { type: boolean, default: false }
+                changes:
+                  type: array
+                  items: { $ref: "#/components/schemas/ChangeRequest" }
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChangeResult" }
+  /changes/revert:
+    post:
+      tags: [Changes]
+      summary: Revert a change by changeId
+      description: >
+        Reverts the most recent audit record for the provided changeId and uri.
+        Database param is optional; if omitted, audit record database is used.
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [changeId, uri]
+              properties:
+                changeId: { type: string }
+                uri: { type: string }
+                database: { type: string }
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChangeResult" }
+  /changes:
+    get:
+      tags: [Changes]
+      summary: List changes with filters
+      description: >
+        Default behavior excludes reverted. Use status=applied,failed,skipped,reverted to filter.
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/UriParam"
+        - in: query
+          name: status
+          schema: { type: string }
+          description: Comma separated statuses
+        - in: query
+          name: since
+          schema: { type: string }
+          description: ISO-8601 date filter for createdAt
+        - in: query
+          name: limit
+          schema: { type: integer, default: 100 }
+        - in: query
+          name: skip
+          schema: { type: integer, default: 0 }
+      responses:
+        "200":
+          description: Result
+  /changes/{changeId}:
+    get:
+      tags: [Changes]
+      summary: Get a change by changeId
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - in: path
+          name: changeId
+          required: true
+          schema: { type: string }
+        - $ref: "#/components/parameters/UriParam"
+      responses:
+        "200":
+          description: Result

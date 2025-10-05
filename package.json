@@ -1,0 +1,40 @@
+﻿{
+    "name":  "cicd-safe-changes-api_v4",
+    "version":  "1.0.0",
+    "main":  "index.js",
+    "scripts":  {
+                    "build":  "tsc -p tsconfig.json",
+                    "dev":  "ts-node-dev --respawn --transpile-only src/index.ts",
+                    "start":  "node dist/index.js"
+                },
+    "keywords":  [
+
+                 ],
+    "author":  "",
+    "license":  "ISC",
+    "description":  "",
+    "dependencies":  {
+                         "cors":  "^2.8.5",
+                         "dotenv":  "^17.2.2",
+                         "express":  "^5.1.0",
+                         "express-rate-limit":  "^8.1.0",
+                         "helmet":  "^8.1.0",
+                         "ipaddr.js":  "^2.2.0",
+                         "jsonwebtoken":  "^9.0.2",
+                         "luxon":  "^3.7.2",
+                         "mongodb":  "^6.19.0",
+                         "pino":  "^9.9.5",
+                         "redoc-express":  "^2.1.0",
+                         "swagger-ui-express":  "^5.0.1",
+                         "yaml":  "^2.8.1",
+                         "zod":  "^4.1.8"
+                     },
+    "devDependencies":  {
+                            "@types/express":  "^5.0.3",
+                            "@types/jsonwebtoken":  "^9.0.10",
+                            "@types/node":  "^24.4.0",
+                            "ts-node":  "^10.9.2",
+                            "ts-node-dev":  "^2.0.0",
+                            "typescript":  "^5.9.2"
+                        }
+}
